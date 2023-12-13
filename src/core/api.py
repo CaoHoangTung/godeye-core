@@ -12,10 +12,11 @@ import os
 import pyrootutils
 from hydra import compose, initialize
 from src.core.core import init_pipeline
+import boto3
 
 # find absolute root path (searches for directory containing any of the files on the list)
 base_path = pyrootutils.find_root(search_from=__file__, indicator=[".git", "setup.cfg"])
-
+REGION = os.environ.get("REGION", "us-west-2")
 
 app = FastAPI()
 
@@ -53,17 +54,49 @@ def predict_coords(file):
         print('error', e)
         return JSONResponse(content={"error": str(e)}, status_code=500)
 
+def get_location_info(latitude, longitude, location_index_name="AskMeWherePlaceIndex"):
+    # Initialize Amazon Location Service client
+    client = boto3.client('location', region_name=REGION)
+
+    # Construct the position parameter
+    position = [longitude, latitude]
+
+    try:
+        # Query Amazon Location Service for location information
+        response = client.search_place_index_for_position(
+            IndexName=location_index_name,  # Replace with the name of your place index
+            Position=position
+        )
+
+        # Extract location information from the response
+        place = [response['Results'][0]]
+        return place
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return [] 
+
+@app.get("/")
+async def root():
+    return JSONResponse(content={"result": "success"})
+
 @app.post("/get-location")
 async def create_upload_file(file: UploadFile = File(...)):
     predicted_coords = predict_coords(file.file)
 
     print('predicted_coords', predicted_coords)
-    
+    try:
+        relevant_locations = get_location_info(predicted_coords[0][1], predicted_coords[0][0])
+    except Exception as e:
+        print(e)
+        print("Setting relevant locations to []")
+        relevant_locations = []
     # Return the processed image as a response
     return JSONResponse(
         content={
             "result": "success", 
-            "coords": predicted_coords
+            "coords": predicted_coords,
+	    "relevant_locations": relevant_locations
         },
         headers={
             'Content-Type': 'application/json',
